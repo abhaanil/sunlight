@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Vancouver Sunlight Clock</title>
+    <link rel="stylesheet" href="styles.css" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Balsamiq+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap"
+        rel="stylesheet">
+
+
+</head>
+
+<body>
+    <img id="dayImage" src="foreground.svg" alt="" />
+    <img id="nightImage" src="foreground-night.svg" alt="" />
+
+    <div class="info ui">
+        <div id="countdownLabel">Minutes to sunrise:</div>
+        <div id="countdownText">–:–:–</div>
+    </div>
+
+    <svg viewBox="-110 -110 220 220" id="sunClock">
+        <circle r="100" class="clock-face"></circle>
+        <path id="sunSector" class="sun-sector"></path>
+        <g id="hourMarks"></g>
+        <line id="currentLine" class="current-line" x1="0" y1="0" x2="0" y2="-100"></line>
+    </svg>
+
+    <div class="daylight-box ui">
+        <div class="daylight-meta">
+            <span class="location">Vancouver, BC</span>
+        </div>
+        <!-- <div>
+            <span id="nowText" class="time">--:--</span>
+        </div> -->
+        <div class="daylight-row">
+            <span class="daylight-label">Daylight left:</span>
+            <span id="leftText">loading…</span>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
