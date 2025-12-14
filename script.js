@@ -7,10 +7,12 @@ const RADIUS = 100;
 const FADE_MINUTES = 15;
 const FADE_MS = FADE_MINUTES * 60 * 1000;
 
+// SVG refs
 const sunSector = document.getElementById("sunSector");
 const hourMarks = document.getElementById("hourMarks");
 const currentLine = document.getElementById("currentLine");
 
+// UI refs
 const leftText = document.getElementById("leftText");
 const countdownText = document.getElementById("countdownText");
 const countdownLabel = document.getElementById("countdownLabel");
@@ -18,13 +20,27 @@ const nowText = document.getElementById("nowText");
 
 // overlays
 const nightImage = document.getElementById("nightImage");
+const dayImage = document.getElementById("dayImage");
 
 let sunriseToday = null;
 let sunsetToday = null;
 let sunriseTomorrow = null;
 
+let ticker = null;
+
+// ---- LOCAL DATE STRING (fixes UTC day flip) ----
+function localDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
 // ---- DRAW STATIC 24H CLOCK ----
 function drawHourMarks() {
+    if (!hourMarks) return;
+
+    hourMarks.innerHTML = ""; // avoid duplicates
     for (let h = 0; h < 24; h++) {
         const angle = (h / 24) * 2 * Math.PI - Math.PI / 2;
 
@@ -49,12 +65,10 @@ function drawHourMarks() {
         label.setAttribute("x", lx);
         label.setAttribute("y", ly);
         label.setAttribute("class", "hour-label");
-
         label.textContent = h === 0 ? 24 : h;
         hourMarks.appendChild(label);
     }
 }
-
 drawHourMarks();
 
 // ---- HELPERS ----
@@ -67,12 +81,6 @@ function formatHMS(totalSeconds) {
     const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
     const s = String(totalSeconds % 60).padStart(2, "0");
     return `${h}:${m}:${s}`;
-}
-
-function formatTime(date) {
-    const h = String(date.getHours()).padStart(2, "0");
-    const m = String(date.getMinutes()).padStart(2, "0");
-    return `${h}:${m}`;
 }
 
 function makeSectorPath(startAngle, endAngle) {
@@ -99,7 +107,7 @@ function clamp01(x) {
     return Math.max(0, Math.min(1, x));
 }
 
-// Color interpolation helpers (hex -> rgb -> hex)
+// ---- COLOR BLEND HELPERS ----
 function lerp(a, b, t) { return a + (b - a) * t; }
 
 function hexToRgb(hex) {
@@ -125,144 +133,128 @@ function blendHex(dayHex, nightHex, t) {
     });
 }
 
-/**
- * Returns a nightFactor in [0..1] with your rules:
- * - After sunset: 0 → 1 over 15 minutes
- * - Night: stays 1
- * - 15 minutes before sunrise: 1 → 0
- * - Daytime: 0
- */
+// ---- NIGHT FACTOR ----
 function getNightFactor(now) {
     if (!sunriseToday || !sunsetToday || !sunriseTomorrow) return 0;
 
     const nextSunrise = now < sunriseToday ? sunriseToday : sunriseTomorrow;
 
-    // After sunset → fade in
     if (now >= sunsetToday) {
         const t = (now - sunsetToday) / FADE_MS;
         return t < 1 ? clamp01(t) : 1;
     }
 
-    // Before sunrise → fully night, except fade out right before sunrise
     if (now < sunriseToday) {
         const fadeOutStart = new Date(nextSunrise.getTime() - FADE_MS);
         if (now >= fadeOutStart) {
-            const t = (now - fadeOutStart) / FADE_MS; // 0→1
-            return 1 - clamp01(t);                    // 1→0
+            const t = (now - fadeOutStart) / FADE_MS;
+            return 1 - clamp01(t);
         }
         return 1;
     }
 
-    // Daytime
     return 0;
 }
 
 function updateDayNightVisuals(now) {
     const nightFactor = getNightFactor(now);
 
-    // Fade images together
-    if (nightImage) {
-        nightImage.style.opacity = nightFactor.toFixed(3);
-    }
+    if (nightImage) nightImage.style.opacity = nightFactor.toFixed(3);
+    if (dayImage) dayImage.style.opacity = (1 - nightFactor).toFixed(3);
 
-    const dayImage = document.getElementById("dayImage");
-    if (dayImage) {
-        dayImage.style.opacity = (1 - nightFactor).toFixed(3);
-    }
-
-    // Blend SVG colors (already implemented)
     const root = document.documentElement;
     const styles = getComputedStyle(root);
 
-    const dayStroke = styles.getPropertyValue("--svg-day").trim();
-    const nightStroke = styles.getPropertyValue("--svg-night").trim();
-    const strokeBlend = blendHex(dayStroke, nightStroke, nightFactor);
-    root.style.setProperty("--svg-active", strokeBlend);
+    const dayStroke = styles.getPropertyValue("--svg-day").trim() || "#FF812C";
+    const nightStroke = styles.getPropertyValue("--svg-night").trim() || "#769CFF";
+    const daySector = styles.getPropertyValue("--sector-day").trim() || "#F8B848";
+    const nightSector = styles.getPropertyValue("--sector-night").trim() || "#CECFD4";
 
-    const daySector = styles.getPropertyValue("--sector-day").trim();
-    const nightSector = styles.getPropertyValue("--sector-night").trim();
-    const sectorBlend = blendHex(daySector, nightSector, nightFactor);
-    root.style.setProperty("--sector-active", sectorBlend);
+    root.style.setProperty("--svg-active", blendHex(dayStroke, nightStroke, nightFactor));
+    root.style.setProperty("--sector-active", blendHex(daySector, nightSector, nightFactor));
 }
-
 
 // ---- MAIN UPDATE LOOP ----
 function updateClock() {
-    if (!sunriseToday || !sunsetToday) return;
+    if (!sunriseToday || !sunsetToday || !sunriseTomorrow) return;
 
     const now = new Date();
 
-    // NEW: sync illustration + SVG color transitions
     updateDayNightVisuals(now);
-
-    // current time text
-    if (nowText) {
-        nowText.textContent = formatTime(now);
-    }
 
     const nowH = to24hFraction(now);
     const sunriseH = to24hFraction(sunriseToday);
     const sunsetH = to24hFraction(sunsetToday);
 
-    // Current time line on the clock
-    const angleNow = (nowH / 24) * 2 * Math.PI - Math.PI / 2;
-    currentLine.setAttribute("x2", RADIUS * Math.cos(angleNow));
-    currentLine.setAttribute("y2", RADIUS * Math.sin(angleNow));
+    if (currentLine) {
+        const angleNow = (nowH / 24) * 2 * Math.PI - Math.PI / 2;
+        currentLine.setAttribute("x2", RADIUS * Math.cos(angleNow));
+        currentLine.setAttribute("y2", RADIUS * Math.sin(angleNow));
+    }
 
-    // Daylight slice (remaining today)
-    if (nowH >= sunsetH || nowH <= sunriseH) {
-        sunSector.setAttribute("d", "");
-        if (leftText) leftText.textContent = "0 h";
+    // Sector + % sunlight left
+    if (now >= sunsetToday || now <= sunriseToday) {
+        if (sunSector) sunSector.setAttribute("d", "");
+        if (leftText) leftText.textContent = "0%";
     } else {
         const startH = Math.max(nowH, sunriseH);
         const endH = sunsetH;
-        const hoursLeft = endH - nowH;
-        if (leftText) leftText.textContent = `${hoursLeft.toFixed(2)} h`;
 
-        const d = makeSectorPath(
-            (startH / 24) * 2 * Math.PI - Math.PI / 2,
-            (endH / 24) * 2 * Math.PI - Math.PI / 2
-        );
-        sunSector.setAttribute("d", d);
+        const totalMs = sunsetToday - sunriseToday;
+        const leftMs = sunsetToday - now;
+        const pctLeft = Math.max(0, Math.min(100, (leftMs / totalMs) * 100));
+
+        if (leftText) leftText.textContent = `${pctLeft.toFixed(0)}%`;
+
+        if (sunSector) {
+            const d = makeSectorPath(
+                (startH / 24) * 2 * Math.PI - Math.PI / 2,
+                (endH / 24) * 2 * Math.PI - Math.PI / 2
+            );
+            sunSector.setAttribute("d", d);
+        }
     }
 
-    // Countdown label + target
+    // Countdown
     let target;
     let label;
 
     if (now < sunriseToday) {
         target = sunriseToday;
-
+        label = "Minutes to sunrise:";
     } else if (now >= sunriseToday && now < sunsetToday) {
         target = sunsetToday;
-
+        label = "Minutes of sun left:";
     } else {
         target = sunriseTomorrow;
-
+        label = "Minutes to sunrise:";
     }
 
     if (countdownLabel) countdownLabel.textContent = label;
 
     const diff = target - now;
     if (countdownText) {
-        countdownText.textContent =
-            diff > 0 ? formatHMS(Math.floor(diff / 1000)) : "00:00:00";
+        countdownText.textContent = diff > 0 ? formatHMS(Math.floor(diff / 1000)) : "00:00:00";
     }
 }
 
 // ---- LOAD SUN TIMES ----
 async function loadSunTimes() {
     const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
+    const todayStr = localDateStr(today);
 
     const tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split("T")[0];
+    const tomorrowStr = localDateStr(tomorrow);
 
     async function getSunTimes(dateStr) {
         const url = `https://api.sunrise-sunset.org/json?lat=${VANCOUVER_LAT}&lng=${VANCOUVER_LON}&date=${dateStr}&formatted=0`;
         const res = await fetch(url);
         const json = await res.json();
+
+        if (!json || json.status !== "OK" || !json.results) {
+            throw new Error("Sun API error");
+        }
         return json.results;
     }
 
@@ -276,5 +268,16 @@ async function loadSunTimes() {
     updateClock();
 }
 
-loadSunTimes();
-setInterval(updateClock, 1000);
+// ---- INIT ----
+(async function init() {
+    try {
+        await loadSunTimes();
+
+        if (ticker) clearInterval(ticker);
+        ticker = setInterval(updateClock, 1000);
+    } catch (e) {
+        console.error(e);
+        if (countdownText) countdownText.textContent = "error";
+        if (leftText) leftText.textContent = "—";
+    }
+})();
