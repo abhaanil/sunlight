@@ -1,6 +1,10 @@
 // ---- CONFIG ----
-const VANCOUVER_LAT = 49.2827;
-const VANCOUVER_LON = -123.1207;
+const DEFAULT_LAT = 49.2827;     // Vancouver fallback
+const DEFAULT_LON = -123.1207;
+
+let LAT = DEFAULT_LAT;
+let LON = DEFAULT_LON;
+
 const RADIUS = 100;
 
 // Fade behavior
@@ -16,7 +20,8 @@ const currentLine = document.getElementById("currentLine");
 const leftText = document.getElementById("leftText");
 const countdownText = document.getElementById("countdownText");
 const countdownLabel = document.getElementById("countdownLabel");
-const nowText = document.getElementById("nowText");
+const nowText = document.getElementById("nowText"); // safe if missing
+const locationText = document.getElementById("locationText");
 
 // overlays
 const nightImage = document.getElementById("nightImage");
@@ -27,6 +32,63 @@ let sunsetToday = null;
 let sunriseTomorrow = null;
 
 let ticker = null;
+
+// ---- LOCATION ----
+function setLocationLabel(text) {
+    if (locationText) locationText.textContent = text;
+}
+
+function getUserLocation() {
+    return new Promise((resolve) => {
+        if (!("geolocation" in navigator)) {
+            resolve({ lat: DEFAULT_LAT, lon: DEFAULT_LON, ok: false });
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                resolve({
+                    lat: pos.coords.latitude,
+                    lon: pos.coords.longitude,
+                    ok: true,
+                });
+            },
+            () => resolve({ lat: DEFAULT_LAT, lon: DEFAULT_LON, ok: false }),
+            {
+                enableHighAccuracy: false,
+                timeout: 8000,
+                maximumAge: 5 * 60 * 1000,
+            }
+        );
+    });
+}
+
+// Reverse geocode: lat/lon -> "City, CC" using OpenStreetMap Nominatim
+async function reverseGeocode(lat, lon) {
+    try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
+        const res = await fetch(url, {
+            headers: { "Accept": "application/json" }
+        });
+        const data = await res.json();
+
+        const addr = data.address || {};
+        const city =
+            addr.city ||
+            addr.town ||
+            addr.village ||
+            addr.hamlet ||
+            addr.municipality ||
+            addr.county ||
+            addr.state ||
+            "Unknown place";
+
+        const cc = addr.country_code ? addr.country_code.toUpperCase() : "";
+        return cc ? `${city}, ${cc}` : city;
+    } catch {
+        return "Your location";
+    }
+}
 
 // ---- LOCAL DATE STRING (fixes UTC day flip) ----
 function localDateStr(d) {
@@ -40,7 +102,7 @@ function localDateStr(d) {
 function drawHourMarks() {
     if (!hourMarks) return;
 
-    hourMarks.innerHTML = ""; // avoid duplicates
+    hourMarks.innerHTML = "";
     for (let h = 0; h < 24; h++) {
         const angle = (h / 24) * 2 * Math.PI - Math.PI / 2;
 
@@ -81,6 +143,12 @@ function formatHMS(totalSeconds) {
     const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
     const s = String(totalSeconds % 60).padStart(2, "0");
     return `${h}:${m}:${s}`;
+}
+
+function formatTime(date) {
+    const h = String(date.getHours()).padStart(2, "0");
+    const m = String(date.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
 }
 
 function makeSectorPath(startAngle, endAngle) {
@@ -182,6 +250,8 @@ function updateClock() {
 
     updateDayNightVisuals(now);
 
+    if (nowText) nowText.textContent = formatTime(now);
+
     const nowH = to24hFraction(now);
     const sunriseH = to24hFraction(sunriseToday);
     const sunsetH = to24hFraction(sunsetToday);
@@ -248,7 +318,7 @@ async function loadSunTimes() {
     const tomorrowStr = localDateStr(tomorrow);
 
     async function getSunTimes(dateStr) {
-        const url = `https://api.sunrise-sunset.org/json?lat=${VANCOUVER_LAT}&lng=${VANCOUVER_LON}&date=${dateStr}&formatted=0`;
+        const url = `https://api.sunrise-sunset.org/json?lat=${LAT}&lng=${LON}&date=${dateStr}&formatted=0`;
         const res = await fetch(url);
         const json = await res.json();
 
@@ -271,12 +341,23 @@ async function loadSunTimes() {
 // ---- INIT ----
 (async function init() {
     try {
+        setLocationLabel("Locating…");
+
+        const loc = await getUserLocation();
+        LAT = loc.lat;
+        LON = loc.lon;
+
+        // Show real place name
+        const placeName = await reverseGeocode(LAT, LON);
+        setLocationLabel(placeName);
+
         await loadSunTimes();
 
         if (ticker) clearInterval(ticker);
         ticker = setInterval(updateClock, 1000);
     } catch (e) {
         console.error(e);
+        setLocationLabel("Location unavailable");
         if (countdownText) countdownText.textContent = "error";
         if (leftText) leftText.textContent = "—";
     }
