@@ -133,3 +133,11 @@ svg {
     align-items: right;
     color: var(--svg-active);
 }
+
+.artist-name {
+    font-size: 12px;
+    color: var(--svg-active);
+    font-style: italic;
+    text-decoration: none;
+
+}
